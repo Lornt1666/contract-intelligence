@@ -14,5 +14,3 @@ download a file. Type "cloudshell aliases" to see these commands.
 
 Type "help" to see this message any time. Type "builtin help" to see Bash interpreter help.
 
-
-## Last Automation Test: Tue May  5 10:04:59 PM UTC 2026
