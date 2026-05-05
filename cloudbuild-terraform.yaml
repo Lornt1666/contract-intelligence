@@ -1,0 +1,57 @@
+steps:
+  # Initialize Terraform with the GCS backend
+  - name: 'hashicorp/terraform:latest'
+    args: ['init']
+    dir: 'terraform'
+
+  # Validate Terraform formatting
+  - name: 'hashicorp/terraform:latest'
+    args: ['fmt', '-check', '-diff']
+    dir: 'terraform'
+
+  # Validate Terraform configuration
+  - name: 'hashicorp/terraform:latest'
+    args: ['validate']
+    dir: 'terraform'
+
+  # Security scan using tfsec
+  - name: 'aquasec/tfsec:latest'
+    args: ['.']
+    dir: 'terraform'
+
+  # Deeper infrastructure scanning using Checkov
+  - name: 'bridgecrew/checkov:latest'
+    args: [
+      '-d', '.',
+      '--framework', 'terraform',
+      '--quiet',
+      '--soft-fail',
+      '--external-checks-dir', 'custom-policies'
+    ]
+    dir: 'terraform'
+
+  # Generate a execution plan
+  - name: 'hashicorp/terraform:latest'
+    args: ['plan', '-out=tfplan']
+    dir: 'terraform'
+
+  # Apply the changes automatically only on the main branch using the exported plan
+  - name: 'hashicorp/terraform:latest'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        if [ "$BRANCH_NAME" = "main" ]; then
+          terraform apply -auto-approve tfplan
+        else
+          echo "*******************************************************************************"
+          echo " Current branch is $BRANCH_NAME. Skipping terraform apply. "
+          echo "*******************************************************************************"
+        fi
+    dir: 'terraform'
+
+artifacts:
+  objects:
+    location: 'gs://${_ARTIFACT_BUCKET}/terraform/plans/${BUILD_ID}'
+    paths:
+      - 'terraform/tfplan'

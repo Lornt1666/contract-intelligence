@@ -1,0 +1,79 @@
+steps:
+  # Initialize Terraform with the GCS backend
+  - name: 'hashicorp/terraform:latest'
+    args: ['init']
+    dir: 'terraform'
+
+  # Validate Terraform formatting
+  - name: 'hashicorp/terraform:latest'
+    args: ['fmt', '-check', '-diff']
+    dir: 'terraform'
+
+  # Validate Terraform configuration
+  - name: 'hashicorp/terraform:latest'
+    args: ['validate']
+    dir: 'terraform'
+
+  # Security scan using tfsec to catch misconfigurations early
+  - name: 'aquasec/tfsec:latest'
+    args: ['.']
+    dir: 'terraform'
+
+  # Deeper infrastructure scanning using Checkov
+  - name: 'bridgecrew/checkov:latest'
+    args: [
+      '-d', '.',
+      '--framework', 'terraform',
+      '--quiet',
+      '--soft-fail', # Set to false to block builds on any policy violation
+      '--external-checks-dir', 'custom-policies'
+    ]
+    dir: 'terraform'
+
+  # Generate a execution plan and export it to a file
+  - name: 'hashicorp/terraform:latest'
+    args: ['plan', '-out=tfplan']
+    dir: 'terraform'
+
+  # Mask sensitive values in the plan output before processing for GitHub
+  - name: 'hashicorp/terraform:latest'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        terraform show -no-color tfplan | sed -E 's/([Pp]assword|[Kk]ey|[Ss]ecret|[Tt]oken)([^=]*=[[:space:]]*)"[^"]+"/\1\2"********"/g' > tfplan_masked.txt
+    dir: 'terraform'
+
+  # Post the plan summary to the GitHub Pull Request
+  - name: 'gcr.io/cloud-builders/curl'
+    entrypoint: 'sh'
+    args:
+      - '-c'
+      - |
+        PLAN_SUMMARY=$(tail -n 1 tfplan_masked.txt)
+        curl -s -X POST \
+          -H "Authorization: token $$GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github.v3+json" \
+          -d "{\"body\": \"### 🏗️ Terraform Plan Summary\n\n\`\`\`text\n$PLAN_SUMMARY\n\`\`\`\n\nView Full Build Logs\"}" \
+          "https://api.github.com/repos/$_GITHUB_OWNER/$REPO_NAME/issues/$_PR_NUMBER/comments"
+    secretEnv: ['GITHUB_TOKEN']
+    dir: 'terraform'
+
+  # Convert the plan to JSON for easier review in build logs
+  - name: 'hashicorp/terraform:latest'
+    entrypoint: 'sh'
+    args: ['-c', 'terraform show -json tfplan > tfplan.json']
+    dir: 'terraform'
+
+artifacts:
+  objects:
+    location: 'gs://${_ARTIFACT_BUCKET}/terraform/pull-requests/${_PR_NUMBER}/${BUILD_ID}'
+    paths:
+      - 'terraform/tfplan'
+      - 'terraform/tfplan_masked.txt'
+      - 'terraform/tfplan.json'
+
+availableSecrets:
+  secretManager:
+    - versionName: projects/$PROJECT_ID/secrets/GITHUB_TOKEN/versions/latest
+      env: 'GITHUB_TOKEN'
